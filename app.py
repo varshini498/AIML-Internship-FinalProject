@@ -1,65 +1,35 @@
-# app.py
+from flask import Flask, render_template, request
 import os
-from flask import Flask, render_template, request, send_file, redirect, url_for
-from werkzeug.utils import secure_filename
-import pandas as pd
-from model import rank_resumes
-
-UPLOAD_FOLDER = "resumes"
-ALLOWED_EXT = {"pdf"}
+from ranker import process_resumes
 
 app = Flask(__name__)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# Job roles and descriptions
+JOB_DESCRIPTIONS = {
+    "Data Scientist": "Analyze data using Python, Pandas, NumPy, and build machine learning models using scikit-learn or TensorFlow. Should understand data visualization, feature engineering, and statistical analysis.",
+    "Web Developer": "Design and build responsive web applications using HTML, CSS, JavaScript, and React. Experience with APIs, databases, and Node.js or Flask preferred.",
+    "AI Engineer": "Develop and deploy NLP and Deep Learning models using PyTorch or TensorFlow. Should have experience with neural networks, transformers, and optimization.",
+    "Backend Developer": "Develop scalable RESTful APIs using Flask or Node.js. Handle databases, authentication, and performance tuning.",
+    "Data Analyst": "Perform data cleaning, analysis, and visualization using SQL, Excel, and Power BI. Communicate insights through dashboards."
+}
 
-@app.route("/", methods=["GET"])
+@app.route('/')
 def index():
-    return render_template("index.html", tables=None, chart_data=None)
+    return render_template('index.html', jobs=JOB_DESCRIPTIONS.keys())
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    # clear resumes folder before saving new files (optional)
-    for f in os.listdir(app.config["UPLOAD_FOLDER"]):
-        try:
-            os.remove(os.path.join(app.config["UPLOAD_FOLDER"], f))
-        except:
-            pass
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    job_role = request.form.get("job_role")
+    job_description = JOB_DESCRIPTIONS.get(job_role, "")
+    uploaded_files = request.files.getlist("resumes")
 
-    files = request.files.getlist("resumes")
-    saved = 0
-    for file in files:
-        if file and file.filename and file.filename.lower().endswith(".pdf"):
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-            saved += 1
+    if not uploaded_files or not job_description.strip():
+        return render_template("index.html", error="Please select a job and upload resumes.", jobs=JOB_DESCRIPTIONS.keys())
 
-    if saved == 0:
-        return redirect(url_for("index"))
-
-    # run ranking
-    df = rank_resumes("job_description.txt", app.config["UPLOAD_FOLDER"])
-    csv_path = "ranked_resumes.csv"
-    df.to_csv(csv_path, index=False)
-
-    # Prepare chart data
-    chart_labels = df["Resume"].tolist()
-    chart_scores = (df["Score"] * 100).round(2).tolist()  # convert to 0-100 scale for chart
-
-    # Render template with table and chart data
-    return render_template("index.html",
-                           tables=[df.to_html(classes="data table table-striped", index=False, justify="center")],
-                           chart_data={"labels": chart_labels, "scores": chart_scores},
-                           report_file=csv_path)
-
-@app.route("/download")
-def download():
-    path = "ranked_resumes.csv"
-    if os.path.exists(path):
-        return send_file(path, as_attachment=True)
-    return redirect(url_for("index"))
+    results = process_resumes(uploaded_files, job_description)
+    return render_template("results.html", results=results, job_role=job_role)
 
 if __name__ == "__main__":
     app.run(debug=True)
